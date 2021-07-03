@@ -52,15 +52,29 @@ func BenchmarkWriteToCache(b *testing.B) {
 		})
 	}
 }
-
-func BenchmarkReadFromCache(b *testing.B) {
+func BenchmarkAppendToCache(b *testing.B) {
 	for _, shards := range []int{1, 512, 1024, 8192} {
 		b.Run(fmt.Sprintf("%d-shards", shards), func(b *testing.B) {
-			readFromCache(b, 1024)
+			appendToCache(b, shards, 100*time.Second, b.N)
 		})
 	}
 }
 
+func BenchmarkReadFromCache(b *testing.B) {
+	for _, shards := range []int{1, 512, 1024, 8192} {
+		b.Run(fmt.Sprintf("%d-shards", shards), func(b *testing.B) {
+			readFromCache(b, shards, false)
+		})
+	}
+}
+
+func BenchmarkReadFromCacheWithInfo(b *testing.B) {
+	for _, shards := range []int{1, 512, 1024, 8192} {
+		b.Run(fmt.Sprintf("%d-shards", shards), func(b *testing.B) {
+			readFromCache(b, shards, true)
+		})
+	}
+}
 func BenchmarkIterateOverCache(b *testing.B) {
 
 	m := blob('a', 1)
@@ -127,7 +141,31 @@ func writeToCache(b *testing.B, shards int, lifeWindow time.Duration, requestsIn
 	})
 }
 
-func readFromCache(b *testing.B, shards int) {
+func appendToCache(b *testing.B, shards int, lifeWindow time.Duration, requestsInLifeWindow int) {
+	cache, _ := NewBigCache(Config{
+		Shards:             shards,
+		LifeWindow:         lifeWindow,
+		MaxEntriesInWindow: max(requestsInLifeWindow, 100),
+		MaxEntrySize:       2000,
+	})
+	rand.Seed(time.Now().Unix())
+
+	b.RunParallel(func(pb *testing.PB) {
+		id := rand.Int()
+		counter := 0
+
+		b.ReportAllocs()
+		for pb.Next() {
+			key := fmt.Sprintf("key-%d-%d", id, counter)
+			for j := 0; j < 7; j++ {
+				cache.Append(key, message)
+			}
+			counter = counter + 1
+		}
+	})
+}
+
+func readFromCache(b *testing.B, shards int, info bool) {
 	cache, _ := NewBigCache(Config{
 		Shards:             shards,
 		LifeWindow:         1000 * time.Second,
@@ -143,7 +181,11 @@ func readFromCache(b *testing.B, shards int) {
 		b.ReportAllocs()
 
 		for pb.Next() {
-			cache.Get(strconv.Itoa(rand.Intn(b.N)))
+			if info {
+				cache.GetWithInfo(strconv.Itoa(rand.Intn(b.N)))
+			} else {
+				cache.Get(strconv.Itoa(rand.Intn(b.N)))
+			}
 		}
 	})
 }
